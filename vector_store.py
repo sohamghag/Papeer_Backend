@@ -1,16 +1,10 @@
 import os
-import warnings
-import operator
-import sqlite3
 from dotenv import load_dotenv
 from pathlib import Path
-import cohere
 
 
 # Langchain
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI 
-from langchain_classic.embeddings import CacheBackedEmbeddings # Wrapper around your embedding model that adds caching logic:
-from langchain_classic.storage import LocalFileStore # A simple key-value store that saves data to disk as files.
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_classic.retrievers.document_compressors import LLMChainExtractor
@@ -38,7 +32,6 @@ url=os.getenv("QDRANT_URL")
 
 # Embedding Model -> Dense Vector
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-embedding_file_store=LocalFileStore("./embedding_cache/")
 
 
 
