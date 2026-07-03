@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
 from langsmith import traceable
-
+from langchain_core.embeddings import Embeddings
 # Qdrant Vector Database
 from qdrant_client import QdrantClient,models
 from qdrant_client.http.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams, Modifier
@@ -29,9 +29,6 @@ api_key=os.getenv("QDRANT_API_KEY")
 api_keys_kimi=os.getenv("KIMI_API_KEY")
 api_key_co=os.getenv("CO_API_KEY")
 url=os.getenv("QDRANT_URL")
-
-# Embedding Model -> Dense Vector
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 
 
@@ -59,19 +56,52 @@ qdrant_client = QdrantClient(
 # Embedding Model --> Sparse Vector
 class BM25Embedder(SparseEmbeddings):
     def __init__(self):
-        self._model = SparseTextEmbedding(model_name="Qdrant/bm25")
-    
-    def embed_documents(self,texts:list[str]) ->  list[SparseVector]:
-          return [
-            SparseVector(indices=v.indices.tolist(), values=v.values.tolist())
+        self._model = SparseTextEmbedding(
+            model_name="Qdrant/bm25"
+        )
+
+    @traceable(name="sparse_bm25_document_embeddings")
+    def embed_documents(
+        self,
+        texts: list[str]
+    ) -> list[SparseVector]:
+
+        return [
+            SparseVector(
+                indices=v.indices.tolist(),
+                values=v.values.tolist()
+            )
             for v in list(self._model.embed(texts))
         ]
-    
-    def embed_query(self,text:str) -> SparseVector:
-        v=list(self._model.embed(text))[0]
-        return SparseVector(indices=v.indices.tolist(), values=v.values.tolist())
+
+    @traceable(name="sparse_bm25_query_embedding")
+    def embed_query(self, text: str) -> SparseVector:
+        v = list(self._model.embed(text))[0]
+
+        return SparseVector(
+            indices=v.indices.tolist(),
+            values=v.values.tolist()
+        )
 
 sparse_embedder = BM25Embedder()
+
+# Embedding Model -> Dense Vector
+class TracedOpenAIEmbeddings(Embeddings):
+    def __init__(self, embeddings):
+        self.embeddings = embeddings
+
+    @traceable(name="dense_openai_embeddings", run_type="embedding")
+    def embed_documents(self, texts):
+        return self.embeddings.embed_documents(texts)
+
+    @traceable(name="dense_openai_query_embedding", run_type="embedding")
+    def embed_query(self, text):
+        return self.embeddings.embed_query(text)
+
+
+base_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+embeddings = TracedOpenAIEmbeddings(base_embeddings)
 
 
 # Collection Name which is stored in the Qdrant Cluster
