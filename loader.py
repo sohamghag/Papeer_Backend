@@ -2,7 +2,7 @@ from pathlib import Path
 from langchain_community.document_loaders import PyMuPDFLoader, TextLoader, WebBaseLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+from langsmith import traceable
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 400
 
@@ -85,19 +85,26 @@ def load_markdown(file_path: str) -> list[Document]:
     return _stamp_title(documents, Path(file_path).stem)
 
 
+@traceable(name="load_and_split_document")
 def load_document(source: str) -> list[Document]:
     """Dispatch to the appropriate loader based on URL prefix or file extension."""
     try:
         if source.startswith(("http://", "https://")):
             return load_webpage(source)
+
         ext = Path(source).suffix.lower()
+
         if ext == ".pdf":
             return load_pdf(source)
+
         if ext == ".txt":
             return load_text(source)
+
         if ext in (".md", ".markdown"):
             return load_markdown(source)
+
         raise ValueError(f"Unsupported file type: {ext}")
+
     except Exception as e:
         print(f"[load_document] ERROR: {type(e).__name__}: {e}")
         raise

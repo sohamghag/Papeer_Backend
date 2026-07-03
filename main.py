@@ -17,10 +17,13 @@ from loader import load_document
 from vector_store import add_paper
 from vector_store import list_papers
 from vector_store import delete_collection
-
+from langsmith import traceable
 class ChatRequest(BaseModel):
     session_id: str | None = None
     message: str
+class LoadUrlRequest(BaseModel):
+    session_id: str | None = None
+    url: str
 
 class HistoryMessage(BaseModel):
     role: str   # "user" | "assistant"
@@ -213,6 +216,7 @@ async def delete_conversation(session_id: str):
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}  
 
 @app.post("/api/upload")
+@traceable(name="document_ingestion_pipeline")
 async def upload_documents(session_id: str = Form(...),
     file: UploadFile = File(...),):
     suffix = Path(file.filename).suffix.lower()
@@ -260,9 +264,6 @@ async def get_documents(session_id: str):
         print(f"[/api/documents] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-class LoadUrlRequest(BaseModel):
-    session_id: str | None = None
-    url: str
 
 @app.post("/api/load-url")
 async def load_url(req: LoadUrlRequest):

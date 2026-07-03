@@ -12,7 +12,7 @@ from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_openai import ChatOpenAI
 from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_cohere import CohereRerank
-
+from langsmith import traceable
 
 # Qdrant Vector Database
 from qdrant_client import QdrantClient,models
@@ -106,14 +106,15 @@ def get_vectorstore(session_id: str) -> QdrantVectorStore:
     )
 
 
+@traceable(name="embed_and_store_documents")    
 def add_paper(docs: list[Document], session_id: str) -> None:
     try:
         vectorstore = get_vectorstore(session_id)
         vectorstore.add_documents(docs)
+
     except Exception as e:
         print(f"[add_paper] ERROR: {type(e).__name__}: {e}")
-        raise  # re-raise so the caller also sees it
-
+        raise
 # vector search + re-ranker
 def search(query:str,session_id:str) -> list[Document]:
     try:
