@@ -254,6 +254,7 @@ async def upload_documents(session_id: str = Form(...),
 async def get_documents(session_id: str):
     try:
         titles = list_papers(session_id)
+        print("Titles",titles)
         return {"session_id": session_id, "documents": titles}
     except Exception as e:
         print(f"[/api/documents] ERROR: {type(e).__name__}: {e}")

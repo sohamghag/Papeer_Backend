@@ -535,12 +535,12 @@ async def generate_answer(state: RAGState):
 
             Answer:"""
 
-            # response = kimi_llm.invoke([{"role": "user", "content": prompt}])
-            # answer = response.content
-            chunks = []
-            async for chunk in kimi_llm.astream([{"role": "user", "content": prompt}]):
-                chunks.append(chunk.content)
-            answer = "".join(chunks)
+            response = kimi_llm.invoke([{"role": "user", "content": prompt}])
+            answer = response.content
+            # chunks = []
+            # async for chunk in kimi_llm.astream([{"role": "user", "content": prompt}]):
+            #     chunks.append(chunk.content)
+            # answer = "".join(chunks)
             
 
     # 2. ROUTE: verify_claim 
@@ -562,18 +562,18 @@ async def generate_answer(state: RAGState):
 
     # ── ROUTE: direct_answer ────────────────────────────────────────
     else:
-        # response = kimi_llm.invoke([
-        #     {"role": "system", "content": "Answer using your general knowledge. Be concise."},
-        #     {"role": "user", "content": query}
-        # ])
-        # answer = response.content
-        chunks = []
-        async for chunk in kimi_llm.astream([
+        response = kimi_llm.invoke([
             {"role": "system", "content": "Answer using your general knowledge. Be concise."},
             {"role": "user", "content": query}
-        ]):
-            chunks.append(chunk.content)
-        answer = "".join(chunks)
+        ])
+        answer = response.content
+        # chunks = []
+        # async for chunk in kimi_llm.astream([
+        #     {"role": "system", "content": "Answer using your general knowledge. Be concise."},
+        #     {"role": "user", "content": query}
+        # ]):
+        #     chunks.append(chunk.content)
+        # answer = "".join(chunks)
 
     return {
         "answer": answer,
