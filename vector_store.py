@@ -20,7 +20,7 @@ from qdrant_client.http.models import Distance, VectorParams, SparseVectorParams
 from fastembed import SparseTextEmbedding
 from langchain_qdrant import QdrantVectorStore, RetrievalMode,SparseEmbeddings
 from qdrant_client.models import SparseVector
-
+import tiktoken
 
 # Constants
 EMBED_DIM=1536
@@ -85,19 +85,39 @@ class BM25Embedder(SparseEmbeddings):
 
 sparse_embedder = BM25Embedder()
 
+EMBEDDING_PRICE_PER_1M_TOKENS = 0.02
 # Embedding Model -> Dense Vector
 class TracedOpenAIEmbeddings(Embeddings):
     def __init__(self, embeddings):
         self.embeddings = embeddings
+        self.encoding = tiktoken.get_encoding("cl100k_base")
 
-    @traceable(name="dense_openai_embeddings", run_type="embedding")
+    @traceable(
+        name="dense_openai_embeddings",
+        run_type="embedding"
+    )
     def embed_documents(self, texts):
+        token_count = sum(
+            len(self.encoding.encode(text))
+            for text in texts
+        )
+
+        cost_usd = (
+            token_count / 1_000_000
+        ) * EMBEDDING_PRICE_PER_1M_TOKENS
+
+        print(f"Batch size: {len(texts)}")
+        print(f"Tokens: {token_count}")
+        print(f"Estimated cost: ${cost_usd:.8f}")
+
         return self.embeddings.embed_documents(texts)
 
-    @traceable(name="dense_openai_query_embedding", run_type="embedding")
+    @traceable(
+        name="dense_openai_query_embedding",
+        run_type="embedding"
+    )
     def embed_query(self, text):
         return self.embeddings.embed_query(text)
-
 
 base_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
