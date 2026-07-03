@@ -151,6 +151,69 @@ Use the sidebar to switch between conversations, rename a chat, or delete it. De
 <img width="660" height="680" alt="image" src="https://github.com/user-attachments/assets/c8d26d02-df57-4117-9cb4-228281290a96" />
 ---
 
+ 
+## Performance Benchmarks
+ 
+Measured via LangSmith tracing on real requests, one per route.
+ 
+### Direct Answer
+ 
+| Node | Latency | Tokens |
+|---|---:|---:|
+| Router | 1.62s | 591 |
+| Route decision | 0.00s | — |
+| Generate answer | 1.65s | 29 |
+| Other overhead | ~1.09s | — |
+| **Total** | **4.36s** | **620** |
+ 
+### Retrieve Answer
+ 
+| Node | Latency | Tokens |
+|---|---:|---:|
+| Router | 3.29s | 612 |
+| Route decision | 0.00s | — |
+| First agent_node | 1.79s | 474 |
+| Tool relevance decision | 0.00s | — |
+| Tool node / Retrieval (total) | 2.38s | — |
+| &nbsp;&nbsp;— Dummy dense embedding | 0.58s | — |
+| &nbsp;&nbsp;— ContextualCompressionRetriever | 1.18s | — |
+| &nbsp;&nbsp;— VectorStoreRetriever | 0.84s | — |
+| &nbsp;&nbsp;— Actual dense query embedding | 0.78s | — |
+| &nbsp;&nbsp;— Sparse BM25 query embedding | ~0.00s | — |
+| Second agent_node | 1.50s | 595 |
+| Tool relevance decision | 0.00s | — |
+| Relevancy check | 1.63s | 597 |
+| Check relevancy | 0.00s | — |
+| Generate answer | 2.54s | ~1.7K |
+| **Total** | **14.03s** | **~4K** |
+ 
+**Cost:** ~$0.0006 (input ~3.7K tokens / $0.0004, output 288 tokens / $0.0002) · **Answer quality:** 5/5
+ 
+> Retrieval is the most expensive path — two full agent_node ↔ tool_node round trips (initial search + one rewrite_query retry) each cost a router-level LLM call's worth of tokens on top of the actual embedding/search work.
+ 
+### Verify Claim
+ 
+| Node | Latency | Tokens |
+|---|---:|---:|
+| Router | 1.37s | 603 |
+| Route decision | 0.00s | — |
+| Verify claim (LLM time) | 2.85s | 654 |
+| Verify claim (other processing) | ~2.01s | — |
+| Generate answer | 0.00s | — |
+| **Total** | **7.54s** | **~1.3K** |
+ 
+**Token split:** input ~1.1K (87%) / output 159 (13%) · **Answer quality:** 5/5
+ 
+### Summary — all three routes
+ 
+| Route | Latency | Tokens | Quality |
+|---|---:|---:|---|
+| Direct Answer | 4.36s | 620 | Correct |
+| Verify Claim | 7.54s | ~1.3K | 5/5 |
+| Retrieve Answer | 14.03s | ~4K | 5/5 |
+ 
+
+---
 ## Optimization Techniques
 
 ### Hybrid Search
