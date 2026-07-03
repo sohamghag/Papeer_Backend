@@ -258,3 +258,30 @@ async def get_documents(session_id: str):
     except Exception as e:
         print(f"[/api/documents] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+class LoadUrlRequest(BaseModel):
+    session_id: str | None = None
+    url: str
+
+@app.post("/api/load-url")
+async def load_url(req: LoadUrlRequest):
+    try:
+        session_id = req.session_id
+        if not session_id:
+            session_data = await create_new_session()
+            session_id = session_data["session_id"]
+
+        docs = load_document(req.url)  
+        add_paper(docs, session_id)
+
+        title = docs[0].metadata.get("title", req.url) if docs else req.url
+
+        return {
+            "url": req.url,
+            "title": title,
+            "chunks_added": len(docs),
+            "session_id": session_id,
+        }
+    except Exception as e:
+        print(f"[/api/load-url] ERROR: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
