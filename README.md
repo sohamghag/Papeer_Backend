@@ -216,7 +216,7 @@ Measured uploading a 150-page PDF through `/api/upload`.
 | Embedding cost | ~$0.00169 |
 | Loading + splitting | ~25s |
 | Embedding + DB storage | ~12s |
-| **T
+| **Total ingestion latency** | **~40s** |
  
 ### Summary — all three routes
  
