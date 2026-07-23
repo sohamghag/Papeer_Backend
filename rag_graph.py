@@ -15,21 +15,29 @@ from langgraph.prebuilt import (
     InjectedState, tools_condition
 )
 from langchain_core.tools import tool,InjectedToolCallId
-from vector_store import search
+from vector_store import search, MissingApiKeyError
 from tavily import TavilyClient
 load_dotenv()
-api_keys_open=os.getenv("OPENAI_API_KEY")
-api_keys_kimi=os.getenv("KIMI_API_KEY")
 api_keys_tav=os.getenv("TAV")
 max_retrieval_attempt = 3
 
-kimi_llm = ChatOpenAI(
-    api_key=api_keys_kimi,
-    base_url="https://api.moonshot.ai/v1",
-    model="moonshot-v1-32k"
-)
+def get_llm(state: dict) -> ChatOpenAI:
+    """Builds the OpenAI client for this invocation — requires the user's own key."""
+    api_key = state.get("openai_api_key")
+    if not api_key:
+        raise MissingApiKeyError("An OpenAI API key is required.")
+    return ChatOpenAI(model="gpt-4.1-mini", api_key=api_key)
 
-llm = ChatOpenAI(model="gpt-4.1-mini")
+def get_kimi_llm(state: dict) -> ChatOpenAI:
+    """Builds the Kimi client for this invocation — requires the user's own key."""
+    api_key = state.get("kimi_api_key")
+    if not api_key:
+        raise MissingApiKeyError("A Kimi API key is required.")
+    return ChatOpenAI(
+        api_key=api_key,
+        base_url="https://api.moonshot.ai/v1",
+        model="moonshot-v1-32k",
+    )
 
 def merge_docs(existing, new):
     if new == []:
@@ -41,18 +49,20 @@ def merge_docs(existing, new):
     return existing + deduped
 
 class RAGState(TypedDict):
-    session_id:str  # needed while performing retrieval -->session_id is important to fetch the exact collection for store 
+    session_id:str  # needed while performing retrieval -->session_id is important to fetch the exact collection for store
     query:str | None
     route:str | None
     messages:Annotated[list[BaseMessage],add_messages]
     retrieved_docs: Annotated[list[Document], merge_docs]
-    retrieval_attempts: int 
+    retrieval_attempts: int
     is_relevant:bool | None
     rewrite_query_count:int | None
     relevancy_reason:str | None
-    claim_verdict: str | None              
-    superseding_papers: list[dict] | None  
+    claim_verdict: str | None
+    superseding_papers: list[dict] | None
     answer:str |None
+    openai_api_key: str | None  # required — no fallback to the app's own key
+    kimi_api_key: str | None    # required — no fallback to the app's own key
 
 class RouterDecision(BaseModel):
     route_decision : Literal[
@@ -109,12 +119,14 @@ def check_relevancy(state: RAGState) -> Literal["generate_answer", "rewrite_quer
 
 # Tools 
 @tool(args_schema=RetrieverInput)
-def retrieve_from_vectorstore(query: str, tool_call_id: Annotated[str, InjectedToolCallId],         
-    session_id: Annotated[str, InjectedState("session_id")]):
+def retrieve_from_vectorstore(query: str, tool_call_id: Annotated[str, InjectedToolCallId],
+    session_id: Annotated[str, InjectedState("session_id")],
+    openai_api_key: Annotated[str | None, InjectedState("openai_api_key")] = None,
+    kimi_api_key: Annotated[str | None, InjectedState("kimi_api_key")] = None):
     """Search the uploaded research paper vector store for relevant passages."""
     print(f"\n>>> ENTERED retrieve_from_vectorstore(query={query!r})")
     try:
-        docs = search(query, session_id)
+        docs = search(query, session_id, openai_api_key=openai_api_key, kimi_api_key=kimi_api_key)
         if not docs:
             return "No relevant documents found."
         return [
@@ -152,13 +164,10 @@ def web_search(query:str,tool_call_id: Annotated[str, InjectedToolCallId]):
         print(f"[web_search] ERROR: {type(e).__name__}: {e}")
         raise
 
-
 tools = [retrieve_from_vectorstore,web_search]
-llm_with_tools = llm.bind_tools(tools,parallel_tool_calls=False)
 
 # AIMessage form Agent_Node goes to tool_node Tool node calls the function
 tool_node = ToolNode(tools)
-
 
 def router(state: RAGState):
     # router will decide the route and store in the state 
@@ -279,7 +288,7 @@ Return ONLY the route field.
     ),
     ("human", "{query}"),
 ])
-    kimi_router = kimi_llm.with_structured_output(RouterDecision)
+    kimi_router = get_kimi_llm(state).with_structured_output(RouterDecision)
     chain = prompt | kimi_router    
     response=chain.invoke({"query":query})
 
@@ -292,7 +301,6 @@ Return ONLY the route field.
         "is_relevant": None,           # no reducer → plain overwrite
         "rewrite_query_count": 0,      # no reducer → plain overwrite
     }
-
 
 def agent_node(state:RAGState):
     # agent_prompt = (
@@ -351,8 +359,9 @@ def agent_node(state:RAGState):
     "Just confirm you have context or call one tool to get it."
     )
     current_attempts = state.get("retrieval_attempts", 0)
-    # This Fallback is also very important why --> llm can make tool calls as much as it want and we will stuck in the infinite loop between agent_node and tool_node to avoid 
-    llm_with_brain = llm if current_attempts >=max_retrieval_attempt else llm_with_tools    
+    request_llm = get_llm(state)
+    # This Fallback is also very important why --> llm can make tool calls as much as it want and we will stuck in the infinite loop between agent_node and tool_node to avoid
+    llm_with_brain = request_llm if current_attempts >=max_retrieval_attempt else request_llm.bind_tools(tools, parallel_tool_calls=False)
 
     # trim to current turn only — find the last HumanMessage, keep from there onward
     all_messages = state["messages"]
@@ -386,7 +395,7 @@ def relevancy_check(state: RAGState):
         doc_snippets = "\n\n---\n\n".join(doc.page_content[:600] for doc in retrieved_docs[:3])
         if not doc_snippets:
             return {"is_relevant": False, "relevancy_reason": "No documents were retrieved for the query."}
-        relevancy_check_llm=kimi_llm.with_structured_output(RelevancyDecision)
+        relevancy_check_llm=get_kimi_llm(state).with_structured_output(RelevancyDecision)
         response=relevancy_check_llm.invoke([
         {"role": "system", "content": relevancy_prompt},
         {"role": "user", "content": f"Question: {query}\n\nRetrieved chunks:\n{doc_snippets}"}
@@ -412,7 +421,7 @@ def rewrite_query(state: RAGState):
         )
 
         query=state["query"]
-        rewritten_query_llm = kimi_llm.with_structured_output(RewrittenQuery)
+        rewritten_query_llm = get_kimi_llm(state).with_structured_output(RewrittenQuery)
         response = rewritten_query_llm.invoke([
         {"role": "system", "content": rewrite_query_prompt},
         {"role": "user", "content": f"Original query: {query}\n\nWrite an improved search query."}
@@ -454,7 +463,7 @@ def verify_claim(state: RAGState):
         "- verdict_summary should be 1-2 sentences suitable for display to the user."
         )
 
-        verification_llm = kimi_llm.with_structured_output(ClaimVerificationResult)
+        verification_llm = get_kimi_llm(state).with_structured_output(ClaimVerificationResult)
         response = verification_llm.invoke([
             {"role": "system", "content": verify_prompt},
             {"role": "user", "content": f"Claim: {query}\n\nSearch Results:\n{context}"}
@@ -469,8 +478,6 @@ def verify_claim(state: RAGState):
     except Exception as e:
         print(f"[verify_claim] ERROR: {type(e).__name__}: {e}")
         raise
-
-
 
 async def generate_answer(state: RAGState):
     query = state["query"]
@@ -520,6 +527,9 @@ async def generate_answer(state: RAGState):
             - For web sources use: [Source: <Title>]
             - Every factual paragraph must contain at least one citation.
             - Do NOT cite sources that are not present in the context.
+            - If the context does not explicitly confirm or mention the specific thing asked about, 
+              say clearly that it is not found in the document/context — do not answer based on 
+              related or similar-sounding content.
 
             IMPORTANT — when multiple sources give slightly different values for the 
             SAME fact (e.g. temperature, price, score): give ONE clear primary answer 
@@ -535,7 +545,7 @@ async def generate_answer(state: RAGState):
 
             Answer:"""
 
-            response = kimi_llm.invoke([{"role": "user", "content": prompt}])
+            response = get_kimi_llm(state).invoke([{"role": "user", "content": prompt}])
             answer = response.content
             # chunks = []
             # async for chunk in kimi_llm.astream([{"role": "user", "content": prompt}]):
@@ -562,7 +572,7 @@ async def generate_answer(state: RAGState):
 
     # ── ROUTE: direct_answer ────────────────────────────────────────
     else:
-        response = kimi_llm.invoke([
+        response = get_kimi_llm(state).invoke([
             {"role": "system", "content": "Answer using your general knowledge. Be concise."},
             {"role": "user", "content": query}
         ])
@@ -589,7 +599,6 @@ graph.add_node("agent_node",agent_node)
 graph.add_node("tool_node",tool_node)
 graph.add_node("relevancy_check",relevancy_check)
 graph.add_node("rewrite_query",rewrite_query)
-
 graph.add_edge(START,"router")
 graph.add_conditional_edges("router",route_decision,{"agent_node":"agent_node","verify_claim":"verify_claim","generate_answer":"generate_answer"})
 graph.add_conditional_edges("agent_node",tool_relevancy_decision,{"tool_node":"tool_node","relevancy_check":"relevancy_check","generate_answer": "generate_answer"})

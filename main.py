@@ -3,12 +3,14 @@ from langchain_core.messages import AIMessage,HumanMessage
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-import os 
+import os
+import asyncio
+from openai import OpenAI as OpenAIClient
 from fastapi import FastAPI,HTTPException
 from contextlib import asynccontextmanager
 import uuid
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from rag_graph import graph 
+from rag_graph import graph
 from supabase import create_client
 import tempfile
 from pathlib import Path
@@ -17,13 +19,24 @@ from loader import load_document
 from vector_store import add_paper
 from vector_store import list_papers
 from vector_store import delete_collection
+from vector_store import MissingApiKeyError
 from langsmith import traceable
+
 class ChatRequest(BaseModel):
     session_id: str | None = None
     message: str
+    openai_api_key: str | None = None
+    kimi_api_key: str | None = None
+    
 class LoadUrlRequest(BaseModel):
     session_id: str | None = None
     url: str
+    openai_api_key: str | None = None
+    kimi_api_key: str | None = None
+    
+class VerifyKeysRequest(BaseModel):
+    openai_api_key: str | None = None
+    kimi_api_key: str | None = None
 
 class HistoryMessage(BaseModel):
     role: str   # "user" | "assistant"
@@ -33,12 +46,16 @@ class RenameRequest(BaseModel):
     title: str
 
 load_dotenv()
-api_keys_kimi=os.getenv("KIMI_API_KEY")
-kimi_llm = ChatOpenAI(
-    api_key=api_keys_kimi,
-    base_url="https://api.moonshot.ai/v1",
-    model="moonshot-v1-32k"
-)
+
+def get_kimi_llm(kimi_api_key: str | None = None) -> ChatOpenAI:
+    """Requires the user's own Kimi key — no fallback to the app's .env key."""
+    if not kimi_api_key:
+        raise MissingApiKeyError("A Kimi API key is required.")
+    return ChatOpenAI(
+        api_key=kimi_api_key,
+        base_url="https://api.moonshot.ai/v1",
+        model="moonshot-v1-32k",
+    )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -67,7 +84,7 @@ async def lifespan(app: FastAPI):
         print("[lifespan] Graph compiled with Postgres checkpointer. Ready.")
         yield
     print("[lifespan] Shutting down.")
-
+    
 app = FastAPI(title="Papeer API",lifespan=lifespan)
 
 app.add_middleware(
@@ -77,13 +94,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def generate_session_title(message: str) -> str:
-    response = kimi_llm.invoke([
+async def generate_session_title(message: str, kimi_api_key: str | None = None) -> str:
+    response = get_kimi_llm(kimi_api_key).invoke([
         {"role": "system", "content": "Generate a short 3-5 word title summarizing this message. No quotes, no punctuation at the end. Just the title text."},
         {"role": "user", "content": message}
     ])
     return response.content.strip()
-
+    
 async def create_new_session(title: str = "New Chat") -> str:
     """Creates a new session row and returns the session_id."""
     session_id = str(uuid.uuid4())
@@ -96,6 +113,41 @@ async def create_new_session(title: str = "New Chat") -> str:
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+def _check_openai_key(api_key: str) -> str | None:
+    """Returns None if valid, or an error message string if invalid."""
+    try:
+        OpenAIClient(api_key=api_key).models.list()
+        return None
+    except Exception as e:
+        return str(e)
+
+def _check_kimi_key(api_key: str) -> str | None:
+    """Returns None if valid, or an error message string if invalid."""
+    try:
+        OpenAIClient(api_key=api_key, base_url="https://api.moonshot.ai/v1").models.list()
+        return None
+    except Exception as e:
+        return str(e)
+
+@app.post("/api/keys/verify")
+async def verify_keys(req: VerifyKeysRequest):
+    """Cheap, auth-only validation (no completion cost) of a user-supplied
+    OpenAI/Kimi key. Nothing is stored server-side — the frontend decides
+    whether to save the key locally based on this response."""
+    result = {}
+
+    if req.openai_api_key is not None:
+        error = await asyncio.to_thread(_check_openai_key, req.openai_api_key)
+        result["openai_valid"] = error is None
+        result["openai_error"] = error
+
+    if req.kimi_api_key is not None:
+        error = await asyncio.to_thread(_check_kimi_key, req.kimi_api_key)
+        result["kimi_valid"] = error is None
+        result["kimi_error"] = error
+
+    return result
 
 @app.post("/api/session")
 async def create_session():
@@ -122,6 +174,11 @@ async def chat(req: ChatRequest):
     graph = app_state.get("graph")
     if not graph:
         raise HTTPException(status_code=503, detail="Graph not ready")
+    if not req.openai_api_key or not req.kimi_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide your own OpenAI and Kimi API keys to chat.",
+        )
     session_id = req.session_id
     try:
         if not session_id:
@@ -132,6 +189,8 @@ async def chat(req: ChatRequest):
         initial_state = {
             "session_id": session_id,
             "messages": [HumanMessage(content=req.message)],
+            "openai_api_key": req.openai_api_key,
+            "kimi_api_key": req.kimi_api_key,
         }
         result = await graph.ainvoke(initial_state, config=config)
 
@@ -140,9 +199,11 @@ async def chat(req: ChatRequest):
         current_title = existing.data[0]["title"] if existing.data else "New Chat"
 
         if current_title == "New Chat":
-            new_title = await generate_session_title(req.message)
+            new_title = await generate_session_title(req.message,req.kimi_api_key)
             supabase_client.table("sessions").update({"title": new_title}).eq("session_id", session_id).execute()
 
+    except MissingApiKeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"[/chat] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -218,10 +279,17 @@ ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}
 @app.post("/api/upload")
 @traceable(name="document_ingestion_pipeline")
 async def upload_documents(session_id: str = Form(...),
-    file: UploadFile = File(...),):
+    file: UploadFile = File(...),
+    openai_api_key: str | None = Form(None),
+    kimi_api_key: str | None = Form(None),):
     suffix = Path(file.filename).suffix.lower()
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
+    if not openai_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide your own OpenAI API key to upload documents.",
+        )
     tmp_path = None
     try:
         if not session_id:
@@ -240,13 +308,15 @@ async def upload_documents(session_id: str = Form(...),
         for doc in docs:
             doc.metadata["title"] = original_title
 
-        add_paper(docs, session_id)
+        add_paper(docs, session_id, openai_api_key=openai_api_key)
 
         return {
             "filename": file.filename,
             "chunks_added": len(docs),
             "session_id": session_id,
         }
+    except MissingApiKeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"[/api/upload] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -264,17 +334,21 @@ async def get_documents(session_id: str):
         print(f"[/api/documents] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/api/load-url")
 async def load_url(req: LoadUrlRequest):
+    if not req.openai_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Please provide your own OpenAI API key to load a web page.",
+        )
     try:
         session_id = req.session_id
         if not session_id:
             session_data = await create_new_session()
             session_id = session_data["session_id"]
 
-        docs = load_document(req.url)  
-        add_paper(docs, session_id)
+        docs = load_document(req.url)
+        add_paper(docs, session_id, openai_api_key=req.openai_api_key)
 
         title = docs[0].metadata.get("title", req.url) if docs else req.url
 
@@ -284,6 +358,8 @@ async def load_url(req: LoadUrlRequest):
             "chunks_added": len(docs),
             "session_id": session_id,
         }
+    except MissingApiKeyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"[/api/load-url] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
