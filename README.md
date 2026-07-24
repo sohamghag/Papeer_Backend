@@ -182,43 +182,63 @@ Measured via LangSmith tracing on real requests, one per route.
 | Other overhead  |    ~1.09s |       — |
 | **Total**       | **4.36s** | **620** |
 
-### Retrieve Answer
+### Retrieve Answer (vectorstore path)
 
-| Node                                         |    Latency |  Tokens |
-| -------------------------------------------- | ---------: | ------: |
-| Router                                       |      3.29s |     612 |
-| Route decision                               |      0.00s |       — |
-| First agent_node                             |      1.79s |     474 |
-| Tool relevance decision                      |      0.00s |       — |
-| Tool node / Retrieval (total)                |      2.38s |       — |
-| &nbsp;&nbsp;— Dummy dense embedding          |      0.58s |       — |
-| &nbsp;&nbsp;— ContextualCompressionRetriever |      1.18s |       — |
-| &nbsp;&nbsp;— VectorStoreRetriever           |      0.84s |       — |
-| &nbsp;&nbsp;— Actual dense query embedding   |      0.78s |       — |
-| &nbsp;&nbsp;— Sparse BM25 query embedding    |     ~0.00s |       — |
-| Second agent_node                            |      1.50s |     595 |
-| Tool relevance decision                      |      0.00s |       — |
-| Relevancy check                              |      1.63s |     597 |
-| Check relevancy                              |      0.00s |       — |
-| Generate answer                              |      2.54s |   ~1.7K |
-| **Total**                                    | **14.03s** | **~4K** |
+| Node                                            |    Latency |   Tokens |
+| ------------------------------------------------ | ---------: | -------: |
+| Router                                          |      1.97s |      597 |
+| Route decision                                  |      0.00s |        — |
+| First agent_node                                |      2.64s |      450 |
+| Tool relevance decision                         |      0.00s |        — |
+| Tool node / Retrieval (total)                   |      7.92s |      121 |
+| &nbsp;&nbsp;— dense_openai_embeddings           |      1.57s |        — |
+| &nbsp;&nbsp;— generate_query_variations         |      1.17s |      121 |
+| &nbsp;&nbsp;— VectorStoreRetriever (original)   |      1.10s |        — |
+| &nbsp;&nbsp;— dense_openai_query_embedding      |      0.58s |        — |
+| &nbsp;&nbsp;— VectorStoreRetriever (variation 1) |      1.62s |        — |
+| &nbsp;&nbsp;— dense_openai_query_embedding      |      1.19s |        — |
+| &nbsp;&nbsp;— VectorStoreRetriever (variation 2) |      2.22s |        — |
+| &nbsp;&nbsp;— dense_openai_query_embedding      |      0.83s |        — |
+| &nbsp;&nbsp;— sparse_bm25_query_embedding ×3    |     ~0.00s |        — |
+| Second agent_node                               |      1.02s |      483 |
+| Tool relevance decision                         |      0.00s |        — |
+| Relevancy check                                 |      1.35s |      505 |
+| Check relevancy                                 |      0.00s |        — |
+| Generate answer                                 |      6.00s |    ~1.7K |
+| **Total**                                       | **21.25s** | **3.9K** |
 
-**Cost:** ~$0.0006 (input ~3.7K tokens / $0.0004, output 288 tokens / $0.0002) · **Answer quality:** 5/5
+**Cost:** $0.0005
 
 > Retrieval is the most expensive path — two full agent_node ↔ tool_node round trips (initial search + one rewrite_query retry) each cost a router-level LLM call's worth of tokens on top of the actual embedding/search work.
 
+### Retrieve Answer (web_search path)
+
+| Node                      |    Latency |   Tokens |
+| --------------------------- | ---------: | -------: |
+| Router                    |      1.05s |      732 |
+| Route decision             |      0.00s |        — |
+| First agent_node           |      1.47s |      445 |
+| Tool relevance decision    |      0.00s |        — |
+| Tool node / web_search     |      2.85s |        — |
+| Second agent_node          |      2.00s |      510 |
+| Tool relevance decision    |      0.00s |        — |
+| Relevancy check            |      1.58s |      580 |
+| Check relevancy            |      0.00s |        — |
+| Generate answer            |      1.16s |     1.4K |
+| **Total**                  | **10.87s** | **3.6K** |
+
+**Cost:** $0.0005
+
 ### Verify Claim
 
-| Node                            |   Latency |    Tokens |
-| ------------------------------- | --------: | --------: |
-| Router                          |     1.37s |       603 |
-| Route decision                  |     0.00s |         — |
-| Verify claim (LLM time)         |     2.85s |       654 |
-| Verify claim (other processing) |    ~2.01s |         — |
-| Generate answer                 |     0.00s |         — |
-| **Total**                       | **7.54s** | **~1.3K** |
-
-**Token split:** input ~1.1K (87%) / output 159 (13%) · **Answer quality:** 5/5
+| Node                                       |   Latency |   Tokens |
+| --------------------------------------------- | --------: | -------: |
+| Router                                     |     1.13s |      734 |
+| Route decision                             |     0.00s |        — |
+| Verify claim (LLM time)                    |     2.62s |      581 |
+| Verify claim (Tavily search + processing)  |    ~3.43s |        — |
+| Generate answer                            |     0.00s |        — |
+| **Total**                                  | **8.01s** | **1.3K** |
 
 ### Document Ingestion (upload → searchable)
 
@@ -229,18 +249,27 @@ Measured uploading a 150-page PDF through `/api/upload`.
 | Pages                       |       150 |
 | Chunks                      |       301 |
 | Embedding tokens            |    83,845 |
-| Embedding cost              | ~$0.00169 |
+| Embedding cost              | ~$0.00085 |
 | Loading + splitting         |      ~25s |
 | Embedding + DB storage      |      ~12s |
 | **Total ingestion latency** |  **~40s** |
 
-### Summary — all three routes
+> Embedding cost was previously ~$0.00169 — halved by disabling `QdrantVectorStore`'s redundant `validate_embeddings` pass, which was silently re-embedding every batch a second time before upload.
 
-| Route           | Latency | Tokens | Quality |
-| --------------- | ------: | -----: | ------- |
-| Direct Answer   |   4.36s |    620 | Correct |
-| Verify Claim    |   7.54s |  ~1.3K | 5/5     |
-| Retrieve Answer |  14.03s |    ~4K | 5/5     |
+### Summary — all routes
+
+| Route                         | Latency | Tokens |
+| -------------------------------- | ------: | -----: |
+| Direct Answer                  |   4.36s |    620 |
+| Verify Claim                   |   8.01s |   1.3K |
+| Retrieve Answer (vectorstore)  |  21.25s |   3.9K |
+| Retrieve Answer (web_search)   |  10.87s |   3.6K |
+
+**Fixes applied this pass:**
+
+- Router no longer misclassifies "current event" questions (e.g. sports results, award winners) as `direct_answer` — broadened examples now correctly route these to `retrieve` → `web_search`.
+- `verify_claim` now handles both research-paper claims and general factual claims, not just academic superseding.
+- Ingestion embedding cost roughly halved by disabling the redundant `validate_embeddings` pass in `QdrantVectorStore`.
 
 ---
 

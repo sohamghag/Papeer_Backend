@@ -66,7 +66,6 @@ def _stamp_title(documents: list[Document], title: str) -> list[Document]:
         doc.metadata["title"] = title
     return documents
 
-
 # Rejects documents where nothing usable was actually extracted (scanned file OCR
 # still failed, blocked webpage, empty file, etc.) instead of silently embedding junk.
 def _check_min_content(documents: list[Document], source: str) -> None:
@@ -77,7 +76,6 @@ def _check_min_content(documents: list[Document], source: str) -> None:
             "scanned/image-only file, empty, or blocked from automated access."
         )
 
-
 def _ocr_page(page: "fitz.Page") -> str:
     """Fallback for pages with no extractable text layer — render to an image and OCR it."""
     pix = page.get_pixmap(dpi=200)
@@ -85,7 +83,6 @@ def _ocr_page(page: "fitz.Page") -> str:
     if not result:
         return ""
     return "\n".join(line[1] for line in result)
-
 
 def _extract_page(page: "fitz.Page") -> tuple[list[str], str]:
     """Splits one PDF page into (table markdown blocks, remaining prose text).
@@ -115,7 +112,6 @@ def _extract_page(page: "fitz.Page") -> tuple[list[str], str]:
 
     return tables_md, remaining_text
 
-
 # Loading and Splitting WebPage
 def load_webpage(url: str) -> list[Document]:
     docs = WebBaseLoader(
@@ -131,7 +127,6 @@ def load_webpage(url: str) -> list[Document]:
     documents = _stamp_title(documents, title)
     _check_min_content(documents, url)
     return documents
-
 
 # Loading and Splitting PDF File — table-aware, with OCR fallback for scanned pages
 def load_pdf(file_path: str) -> list[Document]:
@@ -160,7 +155,6 @@ def load_pdf(file_path: str) -> list[Document]:
     _check_min_content(documents, file_path)
     return documents
 
-
 # Loading and Splitting Text File
 def load_text(file_path: str) -> list[Document]:
     docs = TextLoader(file_path, encoding="utf-8").load()
@@ -176,7 +170,6 @@ def load_markdown(file_path: str) -> list[Document]:
     documents = _stamp_title(documents, Path(file_path).stem)
     _check_min_content(documents, file_path)
     return documents
-
 
 @traceable(name="load_and_split_document")
 def load_document(source: str) -> list[Document]:

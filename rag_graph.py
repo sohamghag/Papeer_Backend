@@ -16,7 +16,8 @@ from langgraph.prebuilt import (
 )
 from langchain_core.tools import tool,InjectedToolCallId
 from vector_store import search, MissingApiKeyError
-from tavily import TavilyClient
+# from tavily import TavilyClient
+from tavily import AsyncTavilyClient
 load_dotenv()
 api_keys_tav=os.getenv("TAV")
 max_retrieval_attempt = 3
@@ -119,14 +120,14 @@ def check_relevancy(state: RAGState) -> Literal["generate_answer", "rewrite_quer
 
 # Tools 
 @tool(args_schema=RetrieverInput)
-def retrieve_from_vectorstore(query: str, tool_call_id: Annotated[str, InjectedToolCallId],
+async def retrieve_from_vectorstore(query: str, tool_call_id: Annotated[str, InjectedToolCallId],
     session_id: Annotated[str, InjectedState("session_id")],
     openai_api_key: Annotated[str | None, InjectedState("openai_api_key")] = None,
     kimi_api_key: Annotated[str | None, InjectedState("kimi_api_key")] = None):
     """Search the uploaded research paper vector store for relevant passages."""
     print(f"\n>>> ENTERED retrieve_from_vectorstore(query={query!r})")
     try:
-        docs = search(query, session_id, openai_api_key=openai_api_key, kimi_api_key=kimi_api_key)
+        docs = await search(query, session_id, openai_api_key=openai_api_key, kimi_api_key=kimi_api_key)
         if not docs:
             return "No relevant documents found."
         return [
@@ -138,12 +139,12 @@ def retrieve_from_vectorstore(query: str, tool_call_id: Annotated[str, InjectedT
         raise
 
 @tool(args_schema=WebSearchInput)
-def web_search(query:str,tool_call_id: Annotated[str, InjectedToolCallId]):
+async def web_search(query:str,tool_call_id: Annotated[str, InjectedToolCallId]):
     """Search the web for current or supplementary information using Tavily."""
     print(f"\n>>> ENTERED web_search(query={query!r})")
     try:
-        client = TavilyClient(api_key=api_keys_tav)
-        results = client.search(query, max_results=5)
+        client = AsyncTavilyClient(api_key=api_keys_tav)
+        results = await client.search(query, max_results=5)
         if not results.get("results"):
             return "No web results found."
 
@@ -169,7 +170,7 @@ tools = [retrieve_from_vectorstore,web_search]
 # AIMessage form Agent_Node goes to tool_node Tool node calls the function
 tool_node = ToolNode(tools)
 
-def router(state: RAGState):
+async def router(state: RAGState):
     # router will decide the route and store in the state 
     query = state["messages"][-1].content
     prompt = ChatPromptTemplate([
@@ -240,7 +241,9 @@ and phrases such as:
 
 Even if the question could be answered from general knowledge, choose retrieve whenever the user appears to be referring to an uploaded document.
 
-B. Questions requiring current or live information.
+B. Questions requiring current, live, or recently-changing information —
+   anything whose correct answer could be outdated if answered purely
+   from training knowledge.
 
 Examples:
 - What is the weather in Mumbai?
@@ -249,6 +252,16 @@ Examples:
 - Latest AI news
 - Current stock price of Tesla
 - Today's temperature in Delhi
+- Who won the most recent FIFA World Cup?
+- Who won the last Nobel Prize in Physics?
+- What is the latest iPhone model?
+- Who is the current CEO of OpenAI?
+- What was the result of the most recent election in India?
+
+IMPORTANT: Any question about a "winner," "current holder," "latest,"
+"most recent," or "who is now ___" should be treated as requiring
+current information — even if it superficially resembles a
+general-knowledge "who/what" question like those in direct_answer.
 
 -----------------------------------
 ROUTE: verify_claim
@@ -290,7 +303,7 @@ Return ONLY the route field.
 ])
     kimi_router = get_kimi_llm(state).with_structured_output(RouterDecision)
     chain = prompt | kimi_router    
-    response=chain.invoke({"query":query})
+    response=await chain.ainvoke({"query":query})
 
     print("Router_Response",response,route_decision)
     return {
@@ -440,11 +453,11 @@ def rewrite_query(state: RAGState):
         print(f"[rewrite_query] ERROR: {type(e).__name__}: {e}")
         raise
 
-def verify_claim(state: RAGState):
+async def verify_claim(state: RAGState):
     try:
         query = state["query"]
-        client = TavilyClient(api_key=api_keys_tav)
-        results = client.search(query, max_results=3)
+        client = AsyncTavilyClient(api_key=api_keys_tav)
+        results =await client.search(query, max_results=3)
 
         lines = []
         for r in results.get("results", []):
@@ -464,7 +477,7 @@ def verify_claim(state: RAGState):
         )
 
         verification_llm = get_kimi_llm(state).with_structured_output(ClaimVerificationResult)
-        response = verification_llm.invoke([
+        response = await verification_llm.ainvoke([
             {"role": "system", "content": verify_prompt},
             {"role": "user", "content": f"Claim: {query}\n\nSearch Results:\n{context}"}
         ])
@@ -545,7 +558,7 @@ async def generate_answer(state: RAGState):
 
             Answer:"""
 
-            response = get_kimi_llm(state).invoke([{"role": "user", "content": prompt}])
+            response = await get_kimi_llm(state).ainvoke([{"role": "user", "content": prompt}])
             answer = response.content
             # chunks = []
             # async for chunk in kimi_llm.astream([{"role": "user", "content": prompt}]):
@@ -572,7 +585,7 @@ async def generate_answer(state: RAGState):
 
     # ── ROUTE: direct_answer ────────────────────────────────────────
     else:
-        response = get_kimi_llm(state).invoke([
+        response =await get_kimi_llm(state).ainvoke([
             {"role": "system", "content": "Answer using your general knowledge. Be concise."},
             {"role": "user", "content": query}
         ])

@@ -13,13 +13,14 @@ from langsmith import traceable
 from langchain_core.embeddings import Embeddings
 from pydantic import BaseModel
 # Qdrant Vector Database
-from qdrant_client import QdrantClient,models
+from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams, Modifier
 from fastembed import SparseTextEmbedding
 from langchain_qdrant import QdrantVectorStore, RetrievalMode,SparseEmbeddings
 from qdrant_client.models import SparseVector
 import tiktoken
-
+import asyncio
+from abc import ABC, abstractmethod
 # Constants
 EMBED_DIM=1536
 RRF_K = 60  # standard RRF constant
@@ -59,11 +60,15 @@ qdrant_client = QdrantClient(
     url=url,
     timeout=120   # wait max 120 seconds before failing
 )
+
 # With timeout=120 — after 120 seconds, give up and throw an error. Better to fail fast than hang forever.
 
 # This for BM25Embedder
 # text = ["India is beautiful","My name is chatbot"]
-# list(self._model.embed(texts)) #Embed(texts) --> returns a generator and when we do list(genertor) --> we get a list []
+# list(self._model.embed(texts)) #embed(texts) --> returns a generator and when we do list(genertor) --> we get a list []
+
+# embed(texts) --> returns the generator so  instead of creating a new array of embeddings generator is used to go one by one 
+
 # [
 #     SparseEmbedding(indices=[4821, 5521, ...], values=[3.60, 2.80, ...]),  # for chunk 1  "India is beautiful"
 #     SparseEmbedding(indices=[1234, 5678, ...], values=[2.10, 1.90, ...]),  # for chunk 2   "My name is chatbot"
@@ -75,6 +80,7 @@ qdrant_client = QdrantClient(
 # ]
 
 # Embedding Model --> Sparse Vector
+
 class BM25Embedder(SparseEmbeddings):
     def __init__(self):
         self._model = SparseTextEmbedding(
@@ -139,7 +145,7 @@ class TracedOpenAIEmbeddings(Embeddings):
     )
     def embed_query(self, text):
         return self.embeddings.embed_query(text)
-
+    
 def get_embeddings(openai_api_key: str | None = None) -> TracedOpenAIEmbeddings:
     """Builds the dense embedding client for this call — requires the user's own key."""
     if not openai_api_key:
@@ -150,52 +156,56 @@ def get_embeddings(openai_api_key: str | None = None) -> TracedOpenAIEmbeddings:
     )
     return TracedOpenAIEmbeddings(base_embeddings)
 
-
 # Collection Name which is stored in the Qdrant Cluster
 def get_collection_name(session_id: str) -> str:
     return f"papeer_{session_id.replace('-', '_')}"
 
-
 # creating the collection if not exist and returning the collection if already exist
-def get_vectorstore(session_id: str, openai_api_key: str | None = None) -> QdrantVectorStore:
+def _get_vectorstore_sync(session_id: str, openai_api_key: str | None = None) -> QdrantVectorStore:
     collection_name = get_collection_name(session_id)
-    print("Collection Name",collection_name)
-    print("Document Exist in the Database",qdrant_client.collection_exists(collection_name))
 
     if not qdrant_client.collection_exists(collection_name):
-        qdrant_client.create_collection(
-            collection_name=collection_name,
-            vectors_config={
-                "dense": VectorParams(size=EMBED_DIM, distance=Distance.COSINE)
-            },
-            sparse_vectors_config={
-                "sparse": SparseVectorParams(modifier=Modifier.IDF)
-            }
-        )
+        try:
+            qdrant_client.create_collection(
+                collection_name=collection_name,
+                vectors_config={
+                    "dense": VectorParams(size=EMBED_DIM, distance=Distance.COSINE)
+                },
+                sparse_vectors_config={
+                    "sparse": SparseVectorParams(modifier=Modifier.IDF)
+                }
+            )
+        except Exception:
+            # another concurrent request may have created it between our check and this call —
+            # only re-raise if the collection genuinely still doesn't exist
+            if not qdrant_client.collection_exists(collection_name):
+                raise
     return QdrantVectorStore(
         client=qdrant_client,
         collection_name=collection_name,
         embedding=get_embeddings(openai_api_key),
-        vector_name="dense",          # tell it to use the named dense vector
-        sparse_embedding=sparse_embedder,  # attach sparse embedder
+        vector_name="dense",
+        sparse_embedding=sparse_embedder,
         sparse_vector_name="sparse",
-        retrieval_mode=RetrievalMode.HYBRID,  # key change
+        retrieval_mode=RetrievalMode.HYBRID,
+        validate_embeddings=False,
     )
 
+async def get_vectorstore(session_id: str, openai_api_key: str | None = None) -> QdrantVectorStore:
+    return await asyncio.to_thread(_get_vectorstore_sync, session_id, openai_api_key)
 
 @traceable(name="embed_and_store_documents")
-def add_paper(docs: list[Document], session_id: str, openai_api_key: str | None = None) -> None:
+async def add_paper(docs: list[Document], session_id: str, openai_api_key: str | None = None) -> None:
     try:
-        vectorstore = get_vectorstore(session_id, openai_api_key)
-        vectorstore.add_documents(docs)
+        vectorstore = await get_vectorstore(session_id, openai_api_key)
+        await asyncio.to_thread(vectorstore.add_documents, docs)
 
     except Exception as e:
         print(f"[add_paper] ERROR: {type(e).__name__}: {e}")
         raise
 
-
 @traceable(name="generate_query_variations")
-def _generate_query_variations(query: str, kimi_api_key: str | None = None) -> list[str]:
+async def _generate_query_variations(query: str, kimi_api_key: str | None = None) -> list[str]:
     """RAG Fusion — generate 2 alternative phrasings of the query so retrieval
     isn't limited to whichever chunks happen to match the original wording."""
     prompt = (
@@ -208,12 +218,11 @@ def _generate_query_variations(query: str, kimi_api_key: str | None = None) -> l
         "- Return exactly 2 variations."
     )
     variation_llm = get_query_variation_llm(kimi_api_key).with_structured_output(QueryVariations)
-    response = variation_llm.invoke([
+    response = await variation_llm.ainvoke([
         {"role": "system", "content": prompt},
         {"role": "user", "content": f"Original query: {query}"},
     ])
     return response.variations[:2]
-
 
 def _rrf_fuse(ranked_lists: list[list[Document]]) -> list[Document]:
     """Reciprocal Rank Fusion across multiple independently-retrieved ranked
@@ -230,38 +239,32 @@ def _rrf_fuse(ranked_lists: list[list[Document]]) -> list[Document]:
     fused_keys = sorted(scores, key=lambda k: scores[k], reverse=True)
     return [doc_by_key[key] for key in fused_keys[:FUSION_CANDIDATE_LIMIT]]
 
-
 # vector search + re-ranker — RAG Fusion: multi-query retrieval, RRF-fused, then reranked
-def search(query:str,session_id:str, openai_api_key: str | None = None, kimi_api_key: str | None = None) -> list[Document]:
+async def search(query: str, session_id: str, openai_api_key: str | None = None, kimi_api_key: str | None = None) -> list[Document]:
     try:
-        vectorstore = get_vectorstore(session_id, openai_api_key)
-        base_retriever=vectorstore.as_retriever(search_kwargs={"k":10})
+        vectorstore = await get_vectorstore(session_id, openai_api_key)
+        base_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
         try:
-            variations = _generate_query_variations(query, kimi_api_key)
+            variations = await _generate_query_variations(query, kimi_api_key)
         except Exception as e:
             print(f"[search] query variation generation failed, falling back to single query: {type(e).__name__}: {e}")
             variations = []
 
         all_queries = [query] + variations
-        # each call: dense search + sparse search → Qdrant's internal RRF → top 10 chunks
-        ranked_lists = [base_retriever.invoke(q) for q in all_queries]
+        ranked_lists = await asyncio.gather(
+            *[asyncio.to_thread(base_retriever.invoke, q) for q in all_queries]
+        )
 
-        print("Ranked_List",len(ranked_lists))
+        fused_candidates = _rrf_fuse(list(ranked_lists))
 
-        fused_candidates = _rrf_fuse(ranked_lists)
-
-        print("Fused_candidates",len(fused_candidates))
-
-        # rerank the fused pool using the ORIGINAL query, not the variations
-        return list(compressor.compress_documents(fused_candidates, query=query))
+        return list(await compressor.acompress_documents(fused_candidates, query=query))
     except Exception as e:
         print(f"[search] ERROR: {type(e).__name__}: {e}")
-        raise  # re-raise so the caller also sees it
+        raise
 
-
-# used for return the documents name form the collection 
-def list_papers(session_id: str) -> list[str]:
+# used for return the documents name form the collection
+def _list_papers_sync(session_id: str) -> list[str]:
     collection_name = get_collection_name(session_id)
     if not qdrant_client.collection_exists(collection_name):
         return []
@@ -271,14 +274,12 @@ def list_papers(session_id: str) -> list[str]:
     offset = None
 
     while True:
-
         points, offset = qdrant_client.scroll(
             collection_name=collection_name,
             with_payload=True,
             limit=100,
             offset=offset,
         )
-
         for point in points:
             metadata = (point.payload or {}).get("metadata", {})
             title = (
@@ -286,24 +287,136 @@ def list_papers(session_id: str) -> list[str]:
                 or metadata.get("video_title")
                 or metadata.get("source")
             )
-
             if title and title not in seen:
                 seen.add(title)
                 titles.append(title)
-
         if offset is None:
             break
 
     return titles
 
+async def list_papers(session_id: str) -> list[str]:
+    return await asyncio.to_thread(_list_papers_sync, session_id)
 
-def delete_collection(session_id: str) -> None:
-    """Deletes the entire Qdrant collection for a session, if it exists."""
+def _delete_collection_sync(session_id: str) -> None:
     collection_name = get_collection_name(session_id)
+    if qdrant_client.collection_exists(collection_name):
+        qdrant_client.delete_collection(collection_name)
+        print(f"[delete_collection] Deleted collection: {collection_name}")
+
+async def delete_collection(session_id: str) -> None:
     try:
-        if qdrant_client.collection_exists(collection_name):
-            qdrant_client.delete_collection(collection_name)
-            print(f"[delete_collection] Deleted collection: {collection_name}")
+        await asyncio.to_thread(_delete_collection_sync, session_id)
     except Exception as e:
         print(f"[delete_collection] ERROR: {type(e).__name__}: {e}")
         raise
+
+
+# creating the collection if not exist and returning the collection if already exist
+# async def get_vectorstore(session_id: str, openai_api_key: str | None = None) -> QdrantVectorStore:
+#     collection_name = get_collection_name(session_id)
+
+#     if not await qdrant_client.collection_exists(collection_name):
+#         await qdrant_client.create_collection(
+#             collection_name=collection_name,
+#             vectors_config={
+#                 "dense": VectorParams(size=EMBED_DIM, distance=Distance.COSINE)
+#             },
+#             sparse_vectors_config={
+#                 "sparse": SparseVectorParams(modifier=Modifier.IDF)
+#             }
+#         )
+#     return QdrantVectorStore(
+#         client=qdrant_client,
+#         collection_name=collection_name,
+#         embedding=get_embeddings(openai_api_key),
+#         vector_name="dense",          # tell it to use the named dense vector
+#         sparse_embedding=sparse_embedder,  # attach sparse embedder
+#         sparse_vector_name="sparse",
+#         retrieval_mode=RetrievalMode.HYBRID,  # key change
+#     )
+
+# @traceable(name="embed_and_store_documents")
+# async def add_paper(docs: list[Document], session_id: str, openai_api_key: str | None = None) -> None:
+#     try:
+#         vectorstore = await get_vectorstore(session_id, openai_api_key)
+#         await vectorstore.aadd_documents(docs)
+#
+#     except Exception as e:
+#         print(f"[add_paper] ERROR: {type(e).__name__}: {e}")
+#         raise
+
+# vector search + re-ranker — RAG Fusion: multi-query retrieval, RRF-fused, then reranked
+# async def search(query:str,session_id:str, openai_api_key: str | None = None, kimi_api_key: str | None = None) -> list[Document]:
+#     try:
+#         vectorstore = await get_vectorstore(session_id, openai_api_key)
+#         base_retriever=vectorstore.as_retriever(search_kwargs={"k":10})
+
+#         try:
+#             variations = await _generate_query_variations(query, kimi_api_key)
+#         except Exception as e:
+#             print(f"[search] query variation generation failed, falling back to single query: {type(e).__name__}: {e}")
+#             variations = []
+
+#         all_queries = [query] + variations
+#         # each call: dense search + sparse search → Qdrant's internal RRF → top 10 chunks
+#         ranked_lists = [await base_retriever.ainvoke(q) for q in all_queries]
+
+#         print("Ranked_List",len(ranked_lists))
+
+#         fused_candidates = _rrf_fuse(ranked_lists)
+
+#         print("Fused_candidates",len(fused_candidates))
+
+#         # rerank the fused pool using the ORIGINAL query, not the variations
+#         return list(await compressor.acompress_documents(fused_candidates, query=query))
+#     except Exception as e:
+#         print(f"[search] ERROR: {type(e).__name__}: {e}")
+#         raise  # re-raise so the caller also sees it
+
+# used for return the documents name form the collection
+# async def list_papers(session_id: str) -> list[str]:
+#     collection_name = get_collection_name(session_id)
+#     if not await qdrant_client.collection_exists(collection_name):
+#         return []
+
+#     seen = set()
+#     titles = []
+#     offset = None
+
+#     while True:
+
+#         points, offset = await qdrant_client.scroll(
+#             collection_name=collection_name,
+#             with_payload=True,
+#             limit=100,
+#             offset=offset,
+#         )
+
+#         for point in points:
+#             metadata = (point.payload or {}).get("metadata", {})
+#             title = (
+#                 metadata.get("title")
+#                 or metadata.get("video_title")
+#                 or metadata.get("source")
+#             )
+
+#             if title and title not in seen:
+#                 seen.add(title)
+#                 titles.append(title)
+
+#         if offset is None:
+#             break
+
+#     return titles
+
+# async def delete_collection(session_id: str) -> None:
+#     """Deletes the entire Qdrant collection for a session, if it exists."""
+#     collection_name = get_collection_name(session_id)
+#     try:
+#         if await qdrant_client.collection_exists(collection_name):
+#             await qdrant_client.delete_collection(collection_name)
+#             print(f"[delete_collection] Deleted collection: {collection_name}")
+#     except Exception as e:
+#         print(f"[delete_collection] ERROR: {type(e).__name__}: {e}")
+#         raise

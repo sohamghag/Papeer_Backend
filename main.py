@@ -1,17 +1,18 @@
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage,HumanMessage
 from dotenv import load_dotenv
+# Data validation (age should be negative) and Type Validation (age should be an integer)
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
-import asyncio
-from openai import OpenAI as OpenAIClient
+# from openai import OpenAI as OpenAIClient
+from openai import AsyncOpenAI
 from fastapi import FastAPI,HTTPException
 from contextlib import asynccontextmanager
 import uuid
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from rag_graph import graph
-from supabase import create_client
+from supabase import acreate_client
 import tempfile
 from pathlib import Path
 from fastapi import UploadFile, File, Form
@@ -59,30 +60,36 @@ def get_kimi_llm(kimi_api_key: str | None = None) -> ChatOpenAI:
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
 POSTGRES_URL = os.getenv("POSTGRES_URL")
 app_state: dict = {}
 
-
-
-@asynccontextmanager
+# A context manager is any object that has both __enter__ and __exit__ defined on it.
+# context manager role is to manage the resources so programs will not crashes --> it has two special methods __enter__ and __exit__ which works under the hood 
+# with also operates over context manager 
+@asynccontextmanager  
 async def lifespan(app: FastAPI):
     """
     Build the checkpointer + compile the graph once at startup.
     AsyncPostgresSaver needs an open connection pool for the app's lifetime.
     """
     print("[lifespan] Connecting to Postgres checkpointer...")
+
+    supabase_client =await acreate_client(SUPABASE_URL, SUPABASE_KEY)
+    app_state["supabase"] =supabase_client 
+
  
     async with AsyncPostgresSaver.from_conn_string(POSTGRES_URL) as checkpointer:
         # Creates the checkpoint tables in Supabase if they don't exist yet.
         # Safe to call every startup — it's a no-op if tables already exist.
         await checkpointer.setup()
- 
+
         compiled_graph = graph.compile(checkpointer=checkpointer)
         app_state["graph"] = compiled_graph
  
         print("[lifespan] Graph compiled with Postgres checkpointer. Ready.")
+
         yield
+
     print("[lifespan] Shutting down.")
     
 app = FastAPI(title="Papeer API",lifespan=lifespan)
@@ -95,7 +102,7 @@ app.add_middleware(
 )
 
 async def generate_session_title(message: str, kimi_api_key: str | None = None) -> str:
-    response = get_kimi_llm(kimi_api_key).invoke([
+    response = await get_kimi_llm(kimi_api_key).ainvoke([
         {"role": "system", "content": "Generate a short 3-5 word title summarizing this message. No quotes, no punctuation at the end. Just the title text."},
         {"role": "user", "content": message}
     ])
@@ -104,46 +111,44 @@ async def generate_session_title(message: str, kimi_api_key: str | None = None) 
 async def create_new_session(title: str = "New Chat") -> str:
     """Creates a new session row and returns the session_id."""
     session_id = str(uuid.uuid4())
-    supabase_client.table("sessions").insert({
+    supabase_client = app_state["supabase"]
+    await supabase_client.table("sessions").insert({
         "session_id": session_id,
         "title": title,
     }).execute()
     return {"session_id": session_id, "title": title}
 
 @app.get("/api/health")
-async def health():
+def health():
     return {"status": "ok"}
 
-def _check_openai_key(api_key: str) -> str | None:
-    """Returns None if valid, or an error message string if invalid."""
+async def _check_openai_key(api_key: str) -> str | None:
     try:
-        OpenAIClient(api_key=api_key).models.list()
+        await AsyncOpenAI(api_key=api_key).models.list()
         return None
     except Exception as e:
         return str(e)
 
-def _check_kimi_key(api_key: str) -> str | None:
+
+async def _check_kimi_key(api_key: str) -> str | None:
     """Returns None if valid, or an error message string if invalid."""
     try:
-        OpenAIClient(api_key=api_key, base_url="https://api.moonshot.ai/v1").models.list()
+        await AsyncOpenAI(api_key=api_key, base_url="https://api.moonshot.ai/v1").models.list()
         return None
     except Exception as e:
         return str(e)
 
 @app.post("/api/keys/verify")
 async def verify_keys(req: VerifyKeysRequest):
-    """Cheap, auth-only validation (no completion cost) of a user-supplied
-    OpenAI/Kimi key. Nothing is stored server-side — the frontend decides
-    whether to save the key locally based on this response."""
     result = {}
 
     if req.openai_api_key is not None:
-        error = await asyncio.to_thread(_check_openai_key, req.openai_api_key)
-        result["openai_valid"] = error is None
+        error = await _check_openai_key(req.openai_api_key)
+        result["openai_valid"] = error is None  
         result["openai_error"] = error
 
     if req.kimi_api_key is not None:
-        error = await asyncio.to_thread(_check_kimi_key, req.kimi_api_key)
+        error = await _check_kimi_key(req.kimi_api_key)
         result["kimi_valid"] = error is None
         result["kimi_error"] = error
 
@@ -163,7 +168,8 @@ async def create_session():
 @app.get("/api/conversations")
 async def load_conversations():
     try:
-        response = supabase_client.table("sessions").select("*").order("updated_at", desc=True).execute()
+        supabase_client = app_state["supabase"]
+        response =await supabase_client.table("sessions").select("*").order("updated_at", desc=True).execute()
         return {"conversations": response.data}
     except Exception as e:
         print(f"[/conversations] ERROR: {type(e).__name__}: {e}")
@@ -195,12 +201,14 @@ async def chat(req: ChatRequest):
         result = await graph.ainvoke(initial_state, config=config)
 
         # ALWAYS check — regardless of whether session was just created or already existed
-        existing = supabase_client.table("sessions").select("title").eq("session_id", session_id).execute()
+        supabase_client = app_state["supabase"]
+        existing = await supabase_client.table("sessions").select("title").eq("session_id", session_id).execute()
         current_title = existing.data[0]["title"] if existing.data else "New Chat"
 
         if current_title == "New Chat":
             new_title = await generate_session_title(req.message,req.kimi_api_key)
-            supabase_client.table("sessions").update({"title": new_title}).eq("session_id", session_id).execute()
+            await supabase_client.table("sessions").update({"title": new_title}).eq("session_id", session_id).execute()
+
 
     except MissingApiKeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -214,7 +222,7 @@ async def chat(req: ChatRequest):
         "answer": result.get("answer"),
     }
 
-@app.get("/api/history/{session_id}")
+@app.get("/api/history/{session_id}")   
 async def get_history(session_id: str):
     graph = app_state.get("graph")
     if not graph:
@@ -254,7 +262,8 @@ async def get_history(session_id: str):
 @app.patch("/api/conversations/{session_id}")
 async def rename_conversation(session_id: str, req: RenameRequest):
     try:
-        supabase_client.table("sessions").update({"title": req.title}).eq("session_id", session_id).execute()
+        supabase_client = app_state["supabase"]
+        await supabase_client.table("sessions").update({"title": req.title}).eq("session_id", session_id).execute()
         return {"session_id": session_id, "title": req.title}
     except Exception as e:
         print(f"[/conversations PATCH] ERROR: {type(e).__name__}: {e}")
@@ -263,16 +272,16 @@ async def rename_conversation(session_id: str, req: RenameRequest):
 @app.delete("/api/conversations/{session_id}")
 async def delete_conversation(session_id: str):
     try:
+        supabase_client = app_state["supabase"]
         graph = app_state.get("graph")
         checkpointer = graph.checkpointer  # access the checkpointer LangGraph is using
         await checkpointer.adelete_thread(session_id)
-        delete_collection(session_id)
-        supabase_client.table("sessions").delete().eq("session_id", session_id).execute()
+        await delete_collection(session_id)
+        await supabase_client.table("sessions").delete().eq("session_id", session_id).execute()
         return {"deleted": session_id}
     except Exception as e:
         print(f"[/conversations DELETE] ERROR: {type(e).__name__}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".markdown"}  
 
@@ -296,6 +305,9 @@ async def upload_documents(session_id: str = Form(...),
             session_data = await create_new_session()
             session_id = session_data["session_id"]
 
+
+        # loaders require file path so first create a temp file then write content in this file and this file is present on the disk so we have it's path available pass it to the function as argument
+
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         content = await file.read()
         tmp.write(content)
@@ -305,16 +317,19 @@ async def upload_documents(session_id: str = Form(...),
 
         # load_document stamps title from the temp filename — overwrite with the real name
         original_title = Path(file.filename).stem
-        for doc in docs:
+        for doc in docs:    
             doc.metadata["title"] = original_title
 
-        add_paper(docs, session_id, openai_api_key=openai_api_key)
+        await add_paper(docs, session_id, openai_api_key=openai_api_key)
 
         return {
             "filename": file.filename,
             "chunks_added": len(docs),
             "session_id": session_id,
         }
+
+    # this will run when MissingApiError is raise where it has been used 
+    # Exception is a signal which tells that interruption has happened in the program flow
     except MissingApiKeyError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -327,7 +342,7 @@ async def upload_documents(session_id: str = Form(...),
 @app.get("/api/documents/{session_id}")
 async def get_documents(session_id: str):
     try:
-        titles = list_papers(session_id)
+        titles = await list_papers(session_id)
         print("Titles",titles)
         return {"session_id": session_id, "documents": titles}
     except Exception as e:
@@ -348,7 +363,7 @@ async def load_url(req: LoadUrlRequest):
             session_id = session_data["session_id"]
 
         docs = load_document(req.url)
-        add_paper(docs, session_id, openai_api_key=req.openai_api_key)
+        await add_paper(docs, session_id, openai_api_key=req.openai_api_key)
 
         title = docs[0].metadata.get("title", req.url) if docs else req.url
 
