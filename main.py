@@ -96,12 +96,10 @@ app = FastAPI(title="Papeer API",lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://papeer-frontend-nine.vercel.app/",
-        "http://localhost:5173",   # keep for local dev
-    ],
+    allow_origins=["http://localhost:5173"],
+    allow_origin_regex=r"https://papeer-frontend.*\.vercel\.app",
     allow_methods=["*"],
-    allow_headers=["*"],    
+    allow_headers=["*"],
 )
 async def generate_session_title(message: str, kimi_api_key: str | None = None) -> str:
     response = await get_kimi_llm(kimi_api_key).ainvoke([
