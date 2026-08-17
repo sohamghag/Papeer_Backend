@@ -166,7 +166,7 @@ Use the sidebar to switch between conversations, rename a chat, or delete it. De
 
 ## Architecture
 
-## <img width="660" height="680" alt="image" src="https://github.com/user-attachments/assets/c8d26d02-df57-4117-9cb4-228281290a96" />
+## <img width="915" height="812" alt="papeer_graph" src="https://github.com/user-attachments/assets/bbf62bb0-b8ed-4ee6-8f0c-ba12d2cb6136" />
 
 ## Performance Benchmarks
 
