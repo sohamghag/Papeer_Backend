@@ -1,8 +1,8 @@
 <img src="assets/logo.svg" width="48" height="48" alt="Papeer logo" align="left" style="margin-right: 12px" />
 
-# Papeer — Research Paper Assistant
+# Papeer — AI Document & Web Research Assistant
 
-A conversational AI assistant for students and researchers to upload, explore, verify, and chat with research papers and web pages through natural language.
+Developed a conversational RAG assistant to explore, verify, and chat with documents and web pages using LLMs
 
 **v2** — rebuilt with a FastAPI backend and React frontend, replacing the original Streamlit prototype.
 
