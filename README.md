@@ -184,28 +184,28 @@ Measured via LangSmith tracing on real requests, one per route.
 
 ### Retrieve Answer (vectorstore path)
 
-| Node                                            |    Latency |   Tokens |
+| Node                                             |    Latency |   Tokens |
 | ------------------------------------------------ | ---------: | -------: |
-| Router                                          |      1.97s |      597 |
-| Route decision                                  |      0.00s |        — |
-| First agent_node                                |      2.64s |      450 |
-| Tool relevance decision                         |      0.00s |        — |
-| Tool node / Retrieval (total)                   |      7.92s |      121 |
-| &nbsp;&nbsp;— dense_openai_embeddings           |      1.57s |        — |
-| &nbsp;&nbsp;— generate_query_variations         |      1.17s |      121 |
-| &nbsp;&nbsp;— VectorStoreRetriever (original)   |      1.10s |        — |
-| &nbsp;&nbsp;— dense_openai_query_embedding      |      0.58s |        — |
+| Router                                           |      1.97s |      597 |
+| Route decision                                   |      0.00s |        — |
+| First agent_node                                 |      2.64s |      450 |
+| Tool relevance decision                          |      0.00s |        — |
+| Tool node / Retrieval (total)                    |      7.92s |      121 |
+| &nbsp;&nbsp;— dense_openai_embeddings            |      1.57s |        — |
+| &nbsp;&nbsp;— generate_query_variations          |      1.17s |      121 |
+| &nbsp;&nbsp;— VectorStoreRetriever (original)    |      1.10s |        — |
+| &nbsp;&nbsp;— dense_openai_query_embedding       |      0.58s |        — |
 | &nbsp;&nbsp;— VectorStoreRetriever (variation 1) |      1.62s |        — |
-| &nbsp;&nbsp;— dense_openai_query_embedding      |      1.19s |        — |
+| &nbsp;&nbsp;— dense_openai_query_embedding       |      1.19s |        — |
 | &nbsp;&nbsp;— VectorStoreRetriever (variation 2) |      2.22s |        — |
-| &nbsp;&nbsp;— dense_openai_query_embedding      |      0.83s |        — |
-| &nbsp;&nbsp;— sparse_bm25_query_embedding ×3    |     ~0.00s |        — |
-| Second agent_node                               |      1.02s |      483 |
-| Tool relevance decision                         |      0.00s |        — |
-| Relevancy check                                 |      1.35s |      505 |
-| Check relevancy                                 |      0.00s |        — |
-| Generate answer                                 |      6.00s |    ~1.7K |
-| **Total**                                       | **21.25s** | **3.9K** |
+| &nbsp;&nbsp;— dense_openai_query_embedding       |      0.83s |        — |
+| &nbsp;&nbsp;— sparse_bm25_query_embedding ×3     |     ~0.00s |        — |
+| Second agent_node                                |      1.02s |      483 |
+| Tool relevance decision                          |      0.00s |        — |
+| Relevancy check                                  |      1.35s |      505 |
+| Check relevancy                                  |      0.00s |        — |
+| Generate answer                                  |      6.00s |    ~1.7K |
+| **Total**                                        | **21.25s** | **3.9K** |
 
 **Cost:** $0.0005
 
@@ -213,32 +213,32 @@ Measured via LangSmith tracing on real requests, one per route.
 
 ### Retrieve Answer (web_search path)
 
-| Node                      |    Latency |   Tokens |
-| --------------------------- | ---------: | -------: |
-| Router                    |      1.05s |      732 |
-| Route decision             |      0.00s |        — |
-| First agent_node           |      1.47s |      445 |
-| Tool relevance decision    |      0.00s |        — |
-| Tool node / web_search     |      2.85s |        — |
-| Second agent_node          |      2.00s |      510 |
-| Tool relevance decision    |      0.00s |        — |
-| Relevancy check            |      1.58s |      580 |
-| Check relevancy            |      0.00s |        — |
-| Generate answer            |      1.16s |     1.4K |
-| **Total**                  | **10.87s** | **3.6K** |
+| Node                    |    Latency |   Tokens |
+| ----------------------- | ---------: | -------: |
+| Router                  |      1.05s |      732 |
+| Route decision          |      0.00s |        — |
+| First agent_node        |      1.47s |      445 |
+| Tool relevance decision |      0.00s |        — |
+| Tool node / web_search  |      2.85s |        — |
+| Second agent_node       |      2.00s |      510 |
+| Tool relevance decision |      0.00s |        — |
+| Relevancy check         |      1.58s |      580 |
+| Check relevancy         |      0.00s |        — |
+| Generate answer         |      1.16s |     1.4K |
+| **Total**               | **10.87s** | **3.6K** |
 
 **Cost:** $0.0005
 
 ### Verify Claim
 
-| Node                                       |   Latency |   Tokens |
-| --------------------------------------------- | --------: | -------: |
-| Router                                     |     1.13s |      734 |
-| Route decision                             |     0.00s |        — |
-| Verify claim (LLM time)                    |     2.62s |      581 |
-| Verify claim (Tavily search + processing)  |    ~3.43s |        — |
-| Generate answer                            |     0.00s |        — |
-| **Total**                                  | **8.01s** | **1.3K** |
+| Node                                      |   Latency |   Tokens |
+| ----------------------------------------- | --------: | -------: |
+| Router                                    |     1.13s |      734 |
+| Route decision                            |     0.00s |        — |
+| Verify claim (LLM time)                   |     2.62s |      581 |
+| Verify claim (Tavily search + processing) |    ~3.43s |        — |
+| Generate answer                           |     0.00s |        — |
+| **Total**                                 | **8.01s** | **1.3K** |
 
 ### Document Ingestion (upload → searchable)
 
@@ -259,11 +259,11 @@ Measured uploading a 150-page PDF through `/api/upload`.
 ### Summary — all routes
 
 | Route                         | Latency | Tokens |
-| -------------------------------- | ------: | -----: |
-| Direct Answer                  |   4.36s |    620 |
-| Verify Claim                   |   8.01s |   1.3K |
-| Retrieve Answer (vectorstore)  |  21.25s |   3.9K |
-| Retrieve Answer (web_search)   |  10.87s |   3.6K |
+| ----------------------------- | ------: | -----: |
+| Direct Answer                 |   4.36s |    620 |
+| Verify Claim                  |   8.01s |   1.3K |
+| Retrieve Answer (vectorstore) |  21.25s |   3.9K |
+| Retrieve Answer (web_search)  |  10.87s |   3.6K |
 
 **Fixes applied this pass:**
 

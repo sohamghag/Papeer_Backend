@@ -19,7 +19,7 @@ from fastapi import UploadFile, File, Form
 from loader import load_document
 from vector_store import add_paper
 from vector_store import list_papers
-from vector_store import delete_collection
+from vector_store import delete_collection  
 from vector_store import MissingApiKeyError
 from langsmith import traceable
 
@@ -55,7 +55,8 @@ def get_kimi_llm(kimi_api_key: str | None = None) -> ChatOpenAI:
     return ChatOpenAI(
         api_key=kimi_api_key,
         base_url="https://api.moonshot.ai/v1",
-        model="moonshot-v1-32k",
+        model="kimi-k3",
+        reasoning_effort= "high"
     )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -101,6 +102,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 async def generate_session_title(message: str, kimi_api_key: str | None = None) -> str:
     response = await get_kimi_llm(kimi_api_key).ainvoke([
         {"role": "system", "content": "Generate a short 3-5 word title summarizing this message. No quotes, no punctuation at the end. Just the title text."},

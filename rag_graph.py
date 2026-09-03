@@ -2,7 +2,6 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph,add_messages,START,END
 from langchain_core.messages import BaseMessage,AIMessage,HumanMessage,ToolMessage,SystemMessage
 from typing import TypedDict, Annotated,Literal
-from pydantic import Field
 from langgraph.types import Command
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.documents import Document
@@ -37,7 +36,9 @@ def get_kimi_llm(state: dict) -> ChatOpenAI:
     return ChatOpenAI(
         api_key=api_key,
         base_url="https://api.moonshot.ai/v1",
-        model="moonshot-v1-32k",
+        model="kimi-k3",
+        reasoning_effort= "high"
+        
     )
 
 def merge_docs(existing, new):
@@ -127,6 +128,7 @@ async def retrieve_from_vectorstore(query: str, tool_call_id: Annotated[str, Inj
     """Search the uploaded research paper vector store for relevant passages."""
     print(f"\n>>> ENTERED retrieve_from_vectorstore(query={query!r})")
     try:
+        print("Inside Retreive From Vectore Store")
         docs = await search(query, session_id, openai_api_key=openai_api_key, kimi_api_key=kimi_api_key)
         if not docs:
             return "No relevant documents found."

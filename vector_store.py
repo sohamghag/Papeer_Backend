@@ -50,7 +50,8 @@ def get_query_variation_llm(kimi_api_key: str | None = None) -> ChatOpenAI:
     return ChatOpenAI(
         api_key=kimi_api_key,
         base_url="https://api.moonshot.ai/v1",
-        model="moonshot-v1-32k",
+        model="kimi-k3",
+        reasoning_effort="high"
     )
 
 
@@ -245,6 +246,8 @@ async def search(query: str, session_id: str, openai_api_key: str | None = None,
         vectorstore = await get_vectorstore(session_id, openai_api_key)
         base_retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
 
+        print("VectorStore",vectorstore)
+
         try:
             variations = await _generate_query_variations(query, kimi_api_key)
         except Exception as e:
@@ -257,6 +260,8 @@ async def search(query: str, session_id: str, openai_api_key: str | None = None,
         )
 
         fused_candidates = _rrf_fuse(list(ranked_lists))
+
+        print("Fused_Candidates",fused_candidates)
 
         return list(await compressor.acompress_documents(fused_candidates, query=query))
     except Exception as e:

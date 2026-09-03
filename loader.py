@@ -4,7 +4,7 @@ from langchain_community.document_loaders import TextLoader, WebBaseLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langsmith import traceable
-from rapidocr_onnxruntime import RapidOCR
+from rapidocr_onnxruntime import RapidOCR   # OCR temporarily disabled
 
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 400
