@@ -127,7 +127,7 @@ def hello():
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "Papeer Server's Health is Good"}
 
 async def _check_openai_key(api_key: str) -> str | None:
     try:
