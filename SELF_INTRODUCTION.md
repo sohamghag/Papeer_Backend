@@ -31,26 +31,26 @@ Your background is a differentiator, not a liability. Lead with it, don't apolog
   1. Retrieval misses exact terms → hybrid BM25 + dense, recall 0.77 → 0.86
   2. Compound questions return nothing → query expansion + rank fusion
   3. Ingestion destroys tables and scanned pages → atomic table chunks, OCR, reject-if-empty
-  4. Underneath all three: *the system looks like it's working*. That's why mine says "I couldn't find this" with a reason instead of falling back on general knowledge.
+  4. Underneath all three: _the system looks like it's working_. That's why mine says "I couldn't find this" with a reason instead of falling back on general knowledge.
 
 ### Why it's structured this way
 
-| Beat | Job it does |
-|---|---|
-| NIT Warangal, stated clearly | Recognised name — don't mumble it |
-| **Papeer first** | Signals "backend engineer" immediately; MOF then reads as range, not as your identity |
-| Two hooks, low detail | Gives them a choice of what to pull on instead of a monologue |
-| "Came out of my own field" | Makes the pivot deliberate, not random |
-| Closing on why backend | You're choosing them, not spraying applications |
-| Sports, **last**, one line | Human close. Not in the middle — it isn't part of your professional case |
+| Beat                         | Job it does                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| NIT Warangal, stated clearly | Recognised name — don't mumble it                                                     |
+| **Papeer first**             | Signals "backend engineer" immediately; MOF then reads as range, not as your identity |
+| Two hooks, low detail        | Gives them a choice of what to pull on instead of a monologue                         |
+| "Came out of my own field"   | Makes the pivot deliberate, not random                                                |
+| Closing on why backend       | You're choosing them, not spraying applications                                       |
+| Sports, **last**, one line   | Human close. Not in the middle — it isn't part of your professional case              |
 
 **If they follow up on the sports:**
 
 > "Kho kho especially — I've played it since school. It's a team sport that's almost entirely about coordination and reading the other side, so it's quite different from table tennis, which is individual and reaction-based. I like having both."
 
-Good answer because it shows *why* you like each, rather than just naming them.
+Good answer because it shows _why_ you like each, rather than just naming them.
 
-**Deliberately left out:** LangGraph, Qdrant, Postgres, LangSmith, the ingestion-cost bug. All of that lands harder as an *answer* than as part of the opening. Hold it.
+**Deliberately left out:** LangGraph, Qdrant, Postgres, LangSmith, the ingestion-cost bug. All of that lands harder as an _answer_ than as part of the opening. Hold it.
 
 ---
 
@@ -186,7 +186,7 @@ Always have three. Not asking any reads as disinterest.
 
 **Don't** go past 90 seconds. If they want more, they'll ask.
 
-**Do** end on why *this* role. It signals you're choosing them, not spraying applications.
+**Do** end on why _this_ role. It signals you're choosing them, not spraying applications.
 
 **Do** name one measurable thing. "Halved my ingestion cost" is worth more than three sentences of adjectives.
 
