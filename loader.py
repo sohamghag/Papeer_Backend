@@ -4,16 +4,9 @@ from langchain_community.document_loaders import TextLoader, WebBaseLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langsmith import traceable
-from rapidocr_onnxruntime import RapidOCR   # OCR temporarily disabled
 
 CHUNK_SIZE = 1500
 CHUNK_OVERLAP = 400
-
-# Below this many extracted characters, a page is treated as image-only/scanned and sent to OCR.
-MIN_PAGE_TEXT_CHARS = 20
-# Below this many total characters, the whole loaded document is rejected as unusable.
-MIN_TOTAL_CONTENT_CHARS = 50
-
 
 # Splitter for Text Documents
 _splitter = RecursiveCharacterTextSplitter(
@@ -49,40 +42,22 @@ _md_splitter = RecursiveCharacterTextSplitter(
     ]
 )
 
-# Lazily created — RapidOCR loads its ONNX models on first use.
-_ocr_engine = None
 
+def _check_min_content(documents: list[Document], source: str) -> None:
+    total_chars = sum(len(d.page_content.strip()) for d in documents)
 
-def _get_ocr_engine() -> RapidOCR:
-    global _ocr_engine
-    if _ocr_engine is None:
-        _ocr_engine = RapidOCR()
-    return _ocr_engine
-
+    if total_chars < 50:
+        raise ValueError(
+            f"No usable text could be extracted from '{source}'. "
+            "It may be a scanned/image-only file, empty, or blocked "
+            "from automated access."
+        )
 
 # Adding Title in the Documents Metadata
 def _stamp_title(documents: list[Document], title: str) -> list[Document]:
     for doc in documents:
         doc.metadata["title"] = title
     return documents
-
-# Rejects documents where nothing usable was actually extracted (scanned file OCR
-# still failed, blocked webpage, empty file, etc.) instead of silently embedding junk.
-def _check_min_content(documents: list[Document], source: str) -> None:
-    total_chars = sum(len(d.page_content.strip()) for d in documents)
-    if total_chars < MIN_TOTAL_CONTENT_CHARS:
-        raise ValueError(
-            f"No usable text could be extracted from '{source}'. It may be a "
-            "scanned/image-only file, empty, or blocked from automated access."
-        )
-
-def _ocr_page(page: "fitz.Page") -> str:
-    """Fallback for pages with no extractable text layer — render to an image and OCR it."""
-    pix = page.get_pixmap(dpi=200)
-    result, _ = _get_ocr_engine()(pix.tobytes("png"))
-    if not result:
-        return ""
-    return "\n".join(line[1] for line in result)
 
 def _extract_page(page: "fitz.Page") -> tuple[list[str], str]:
     """Splits one PDF page into (table markdown blocks, remaining prose text).
@@ -107,9 +82,6 @@ def _extract_page(page: "fitz.Page") -> tuple[list[str], str]:
         text_parts.append(block_text)
     remaining_text = "".join(text_parts).strip()
 
-    if len(remaining_text) < MIN_PAGE_TEXT_CHARS and not tables_md:
-        remaining_text = _ocr_page(page)
-
     return tables_md, remaining_text
 
 # Loading and Splitting WebPage
@@ -128,7 +100,7 @@ def load_webpage(url: str) -> list[Document]:
     _check_min_content(documents, url)
     return documents
 
-# Loading and Splitting PDF File — table-aware, with OCR fallback for scanned pages
+# Loading and Splitting PDF File — table-aware
 def load_pdf(file_path: str) -> list[Document]:
     title = Path(file_path).stem
 
