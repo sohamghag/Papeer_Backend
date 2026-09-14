@@ -120,6 +120,10 @@ async def create_new_session(title: str = "New Chat") -> str:
     }).execute()
     return {"session_id": session_id, "title": title}
 
+
+@app.get("/api/")
+def hello():
+    return {"status":"Papeer Server is Working"}
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
