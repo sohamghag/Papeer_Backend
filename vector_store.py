@@ -31,7 +31,7 @@ api_key_co=os.getenv("CO_API_KEY")
 url=os.getenv("QDRANT_URL")
 
  # cohere re-ranker
-compressor = CohereRerank(model="rerank-v4.0-pro",top_n=4,api_key=api_key_co)
+compressor = CohereRerank(model="rerank-v4.0-pro",top_n=4)
 
 class MissingApiKeyError(Exception):
     """Raised when a request reaches an LLM/embedding call with no
