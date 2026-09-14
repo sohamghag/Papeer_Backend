@@ -97,7 +97,7 @@ app = FastAPI(title="Papeer API",lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://51.79.251.202:5173"],
     allow_origin_regex=r"https://papeer-frontend.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
