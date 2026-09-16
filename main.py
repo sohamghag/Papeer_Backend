@@ -55,7 +55,7 @@ def get_kimi_llm(kimi_api_key: str | None = None) -> ChatOpenAI:
     return ChatOpenAI(
         api_key=kimi_api_key,
         base_url="https://api.moonshot.ai/v1",
-        model="kimi-k3",
+        model = "kimi-k2.7-code",
         reasoning_effort= "high"
     )
 
